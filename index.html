@@ -3,20 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-  <title>リアルタイムWebAR 虹プロトタイプ (広角・全体表示版)</title>
+  <title>リアルタイムWebAR 虹プロトタイプ (方位補正・キャリブレーション機能付)</title>
   
-  <!-- AR.jsがカメラを要求する前にGetUserMediaをフックして広角レンズを狙うハック -->
+  <!-- 広角レンズ取得のハック -->
   <script>
     const origGetUserMedia = navigator.mediaDevices ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices) : null;
     if (origGetUserMedia) {
       navigator.mediaDevices.getUserMedia = async (constraints) => {
         if (constraints && constraints.video) {
-          // 既存のvideo制約をオブジェクト化
           const videoConstraints = typeof constraints.video === 'object' ? constraints.video : {};
           constraints.video = {
             ...videoConstraints,
-            facingMode: 'environment', // 明示的に背面カメラを指定
-            // ※Safari (iOS) 向けに広角を要求するヒント (OS依存で確実に効くわけではありませんが、超広角が選ばれやすくなるテクニック)
+            facingMode: 'environment', 
             zoom: 1.0 
           };
         }
@@ -28,7 +26,7 @@
   <!-- A-FrameとAR.jsの読み込み -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-  <!-- SunCalcの読み込み (太陽の位置計算用) -->
+  <!-- SunCalc -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
 
   <style>
@@ -46,28 +44,42 @@
       line-height: 1.6; text-shadow: 1px 1px 2px #000;
     }
 
-    #status-msg {
-      background: rgba(0, 0, 0, 0.8); color: #fff; margin: 10px auto 30px auto; 
-      padding: 12px 20px; border-radius: 8px; text-align: center; max-width: 90%;
-      font-weight: bold; font-size: 16px;
+    #msg-container {
+      margin: 10px auto; display: flex; flex-direction: column; align-items: center; gap: 10px;
     }
+
+    #status-msg {
+      background: rgba(0, 0, 0, 0.8); color: #fff; padding: 12px 20px; 
+      border-radius: 8px; text-align: center; max-width: 90%; font-weight: bold; font-size: 15px;
+    }
+
+    #accuracy-warn {
+      background: rgba(255, 60, 60, 0.9); color: #fff; padding: 8px 16px;
+      border-radius: 8px; font-weight: bold; font-size: 14px; display: none;
+    }
+
+    #controls-panel {
+      margin-bottom: 20px; display: flex; gap: 10px; pointer-events: auto; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px;
+    }
+    #controls-panel button {
+      padding: 12px 18px; font-size: 16px; border-radius: 6px; border: 1px solid #aaa;
+      background: rgba(40, 40, 40, 0.8); color: #fff; cursor: pointer; font-weight: bold;
+    }
+    #controls-panel button:active { background: rgba(100, 100, 100, 0.8); }
 
     #start-screen {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
       background: rgba(0,0,0,0.85); z-index: 2000;
       display: flex; justify-content: center; align-items: center; pointer-events: auto;
     }
-    button {
+    #start-btn {
       padding: 18px 32px; font-size: 18px; border-radius: 8px; border: none;
       background: #007bff; color: white; cursor: pointer; font-weight: bold;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    button:active { background: #0056b3; transform: translateY(2px); }
   </style>
 </head>
 <body>
 
-  <!-- センサー許可用のスタート画面 -->
   <div id="start-screen">
     <button id="start-btn">ARを開始<br><small>(カメラ・位置情報を許可)</small></button>
   </div>
@@ -75,21 +87,30 @@
   <div id="ui-overlay">
     <div id="top-panel">
       <b>[デバッグ情報]</b><br>
-      📍 緯度経度 : <span id="dbg-loc">取得中...</span><br>
-      🧭 コンパス : <span id="dbg-compass">--</span>° (初期化: <span id="dbg-initial">--</span>°)<br>
+      🧭 コンパス : <span id="dbg-compass">--</span>° (校正済: <span id="dbg-initial">--</span>°)<br>
       ☀️ 太陽 : 方位 <span id="dbg-sun-az">--</span>° / 高度 <span id="dbg-sun-alt">--</span>°<br>
-      🌈 反太陽点 : 方位 <span id="dbg-rb-az">--</span>° / 高度 <span id="dbg-rb-alt">--</span>°
+      🌈 反太陽点: 方位 <span id="dbg-rb-az">--</span>° / 高度 <span id="dbg-rb-alt">--</span>°<br>
+      ✂️ 補正値 : <span id="dbg-offset">0</span>°
     </div>
-    <div id="status-msg">位置情報と太陽の軌道を計算中...</div>
+    
+    <div id="msg-container">
+      <div id="accuracy-warn">⚠️ センサー精度低下: スマホを8の字に振って校正してください</div>
+      <div id="status-msg">位置情報と太陽の軌道を計算中...</div>
+      
+      <!-- 手動補正ボタン -->
+      <div id="controls-panel">
+        <button id="btn-minus">◀ -1°</button>
+        <button id="btn-reset">リセット</button>
+        <button id="btn-plus">+1° ▶</button>
+      </div>
+    </div>
   </div>
 
-  <!-- A-Frameシーン: AR.jsの設定 -->
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
     
     <!-- ====== ワールド空間コンテナ ====== -->
     <a-entity id="world-container">
       
-      <!-- 真北（N）と真南（S）のマーカー -->
       <a-entity rotation="0 0 0">
         <a-sphere position="0 0 -5" radius="0.3" color="red" opacity="0.8"></a-sphere>
         <a-text value="N (North)" position="0 0.8 -5" align="center" color="red" scale="1.5 1.5 1.5"></a-text>
@@ -101,7 +122,6 @@
 
       <!-- ====== 虹のコンテナ ====== -->
       <a-entity id="rainbow-pivot" visible="false">
-        <!-- Z軸側に遠ざける（-10 → -20）。半径を相対的にやや小さく設計し画面に収まりやすくする -->
         <a-entity position="0 0 -20">
           <a-torus radius="14.8" radius-tubular="0.2" arc="180" color="#FF0000" material="opacity: 0.7; transparent: true"></a-torus>
           <a-torus radius="14.4" radius-tubular="0.2" arc="180" color="#FF7F00" material="opacity: 0.7; transparent: true"></a-torus>
@@ -115,7 +135,7 @@
 
     </a-entity>
 
-    <!-- カメラ（fov="100"として広角を要求） -->
+    <!-- カメラ -->
     <a-camera position="0 1.6 0" fov="100" look-controls></a-camera>
 
   </a-scene>
@@ -124,53 +144,72 @@
   <script>
     const startBtn = document.getElementById('start-btn');
     const startScreen = document.getElementById('start-screen');
-    const dbgLoc = document.getElementById('dbg-loc');
     const dbgCompass = document.getElementById('dbg-compass');
     const dbgInitial = document.getElementById('dbg-initial');
     const dbgSunAz = document.getElementById('dbg-sun-az');
     const dbgSunAlt = document.getElementById('dbg-sun-alt');
     const dbgRbAz = document.getElementById('dbg-rb-az');
     const dbgRbAlt = document.getElementById('dbg-rb-alt');
+    const dbgOffset = document.getElementById('dbg-offset');
     const statusMsg = document.getElementById('status-msg');
+    const accuracyWarn = document.getElementById('accuracy-warn');
     
     const worldContainer = document.getElementById('world-container');
     const rainbowPivot = document.getElementById('rainbow-pivot');
+
+    // 手動補正用の変数
+    let headingOffset = 0;
 
     let hasLocation = false;
     let userLat = 0, userLng = 0;
     let hasCompass = false;
     let initialHeading = 0;
 
+    // 手動補正ボタンのイベントリスナー
+    document.getElementById('btn-minus').addEventListener('click', () => {
+      headingOffset -= 1;
+      updateRainbow();
+    });
+    document.getElementById('btn-plus').addEventListener('click', () => {
+      headingOffset += 1;
+      updateRainbow();
+    });
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      headingOffset = 0;
+      updateRainbow();
+    });
+
+
     startBtn.addEventListener('click', async () => {
-      // iOS13以降のDeviceOrientation許可要求
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         try {
           const permission = await DeviceOrientationEvent.requestPermission();
-          if (permission !== 'granted') {
-            alert('センサーへのアクセスが拒否されました。設定を確認してください。');
-            return;
-          }
-        } catch (error) {
-          console.error('Permission Error:', error);
-        }
+          if (permission !== 'granted') return alert('センサーへのアクセスが拒否されました。');
+        } catch (error) { console.error(error); }
       }
       startScreen.style.display = 'none';
       initApp();
     });
 
     function initApp() {
-      // 1. デバイスの方位（コンパス）イベント登録
-      // iOS用 (webkitCompassHeading)
+      // デバイスの方位監視
       window.addEventListener('deviceorientation', (e) => {
+        // --- 精度の警告処理 ---
+        // webkitCompassAccuracy が存在し、誤差が15度以上の場合は警告を出す (-1 は取得不能状態)
+        if (e.webkitCompassAccuracy !== undefined) {
+          if (e.webkitCompassAccuracy > 15 || e.webkitCompassAccuracy < 0) {
+            accuracyWarn.style.display = 'block';
+          } else {
+            accuracyWarn.style.display = 'none';
+          }
+        }
+
         if (e.webkitCompassHeading !== undefined) {
           handleHeading(e.webkitCompassHeading);
         }
       });
-      // Android用 (deviceorientationabsolute)
       window.addEventListener('deviceorientationabsolute', (e) => {
-        if (e.alpha !== null) {
-          handleHeading(360 - e.alpha);
-        }
+        if (e.alpha !== null) handleHeading(360 - e.alpha);
       });
 
       function handleHeading(heading) {
@@ -181,18 +220,13 @@
           initialHeading = heading;
           dbgInitial.innerText = initialHeading.toFixed(1);
           hasCompass = true;
-          
-          // ワールドコンテナを初期方位分だけ回転させ、現実の北と一致させる
           worldContainer.setAttribute('rotation', `0 ${initialHeading} 0`);
           if (hasLocation) updateRainbow();
         }
       }
 
-      // 2. 位置情報の取得開始
-      if (!navigator.geolocation) {
-        statusMsg.innerText = "このブラウザでは位置情報がサポートされていません。";
-        return;
-      }
+      // 位置情報の取得
+      if (!navigator.geolocation) return statusMsg.innerText = "位置情報がサポートされていません。";
       statusMsg.innerText = "現在地を取得しています...";
 
       navigator.geolocation.getCurrentPosition(
@@ -200,23 +234,21 @@
           userLat = position.coords.latitude;
           userLng = position.coords.longitude;
           hasLocation = true;
-          
-          dbgLoc.innerText = `${userLat.toFixed(4)}, ${userLng.toFixed(4)}`;
-          
           updateRainbow();
-          setInterval(updateRainbow, 30000); // 30秒ごとに更新
+          setInterval(updateRainbow, 30000);
         },
-        (error) => {
-          statusMsg.innerText = "位置情報の取得に失敗: " + error.message;
-        },
+        (error) => statusMsg.innerText = "位置情報の取得に失敗: " + error.message,
         { enableHighAccuracy: true }
       );
     }
 
-    // 3. 太陽・虹の座標を計算・配置する
+    // 太陽・虹の計算
     function updateRainbow() {
       if (!hasLocation || !hasCompass) return;
       
+      // オフセット値の表示更新
+      dbgOffset.innerText = headingOffset > 0 ? `+${headingOffset}` : headingOffset;
+
       const now = new Date();
       const sunPos = SunCalc.getPosition(now, userLat, userLng);
       
@@ -226,7 +258,6 @@
       dbgSunAlt.innerText = sunAltitudeDeg.toFixed(1);
       dbgSunAz.innerText = sunAzimuthDeg.toFixed(1);
 
-      // 対日点（虹の中心点）の計算
       const rainbowAzimuthDeg = (sunAzimuthDeg + 180) % 360;
       const rainbowAltitudeDeg = -sunAltitudeDeg;
 
@@ -243,8 +274,10 @@
         statusMsg.innerText = "見回して、太陽の反対側のリングを探してください";
         rainbowPivot.setAttribute('visible', 'true');
         
-        // 方位を反転（A-FrameのY軸は反時計回りが正のため）
-        rainbowPivot.setAttribute('rotation', `${rainbowAltitudeDeg} ${-rainbowAzimuthDeg} 0`);
+        // --- 微調整オフセットの適用 ---
+        // ベースの計算に headingOffset を足し引きして手動でのズレを補正する
+        const finalRotY = -rainbowAzimuthDeg + headingOffset;
+        rainbowPivot.setAttribute('rotation', `${rainbowAltitudeDeg} ${finalRotY} 0`);
       }
     }
   </script>
