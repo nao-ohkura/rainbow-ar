@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-  <title>リアルタイムWebAR 虹プロトタイプ (方位補正・キャリブレーション機能付)</title>
+  <title>リアルタイムWebAR 虹プロトタイプ (シェーダー・副虹・アニメーション対応極み版)</title>
   
   <!-- 広角レンズ取得のハック -->
   <script>
@@ -26,60 +26,84 @@
   <!-- A-FrameとAR.jsの読み込み -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-  <!-- SunCalc -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
+
+  <!-- ====== 虹描画用 カスタムシェーダー ====== -->
+  <script>
+    AFRAME.registerShader('rainbow', {
+      schema: {
+        isDouble: {type: 'float', default: 0.0, is: 'uniform'}, // 0:主虹, 1:副虹
+        opacityMult: {type: 'float', default: 0.0, is: 'uniform'} // アニメーション操作用の透過度
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float isDouble;
+        uniform float opacityMult;
+
+        // HSVからRGBへの色変換
+        vec3 hsv2rgb(vec3 c) {
+          vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+          vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+          return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        }
+
+        void main() {
+          // トーラス管の断面（内側が-1、外側が+1になるような座標系）
+          float rad = -cos(vUv.y * 6.2831853);
+          
+          // t: 0.0(最内側) 〜 1.0(最外側)
+          float t = (rad + 1.0) * 0.5;
+
+          // 虹の色相 (主虹は紫[0.75]→赤[0.0]、副虹は赤[0.0]→紫[0.75]と逆転)
+          float hueStart = isDouble > 0.5 ? 0.0 : 0.75;
+          float hueEnd   = isDouble > 0.5 ? 0.75 : 0.0;
+          float hue = mix(hueStart, hueEnd, t);
+          vec3 color = hsv2rgb(vec3(hue, 1.0, 1.0));
+
+          // 【ソフトエッジ】端にいくほどアルファを下げて滑らかに溶け込ませる
+          float alpha = sin(t * 3.14159265);
+          alpha = smoothstep(0.0, 1.0, alpha); // 輪郭のグラデーションをリッチに
+
+          // 両端（地面との接地面）のふわっとしたフェードアウト
+          float edgeFade = sin(vUv.x * 3.14159265);
+          edgeFade = smoothstep(0.0, 0.15, edgeFade);
+
+          // 全体のベース透明度（副虹は主虹の半分程度の濃さに）
+          float baseOpacity = isDouble > 0.5 ? 0.25 : 0.6;
+          
+          // 最終的な透明度 = ベース × 境界フェード × アニメーションフェード
+          alpha *= baseOpacity * edgeFade * opacityMult;
+
+          gl_FragColor = vec4(color, alpha);
+        }
+      `
+    });
+  </script>
 
   <style>
     body { margin: 0; overflow: hidden; font-family: sans-serif; }
-    
-    #ui-overlay {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      pointer-events: none; z-index: 1000;
-      display: flex; flex-direction: column; justify-content: space-between;
-    }
-    
-    #top-panel {
-      background: rgba(0, 0, 0, 0.7); color: #0f0; margin: 10px; padding: 12px;
-      border-radius: 8px; pointer-events: auto; font-family: monospace; font-size: 13px;
-      line-height: 1.6; text-shadow: 1px 1px 2px #000;
-    }
-
-    #msg-container {
-      margin: 10px auto; display: flex; flex-direction: column; align-items: center; gap: 10px;
-    }
-
-    #status-msg {
-      background: rgba(0, 0, 0, 0.8); color: #fff; padding: 12px 20px; 
-      border-radius: 8px; text-align: center; max-width: 90%; font-weight: bold; font-size: 15px;
-    }
-
-    #accuracy-warn {
-      background: rgba(255, 60, 60, 0.9); color: #fff; padding: 8px 16px;
-      border-radius: 8px; font-weight: bold; font-size: 14px; display: none;
-    }
-
-    #controls-panel {
-      margin-bottom: 20px; display: flex; gap: 10px; pointer-events: auto; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px;
-    }
-    #controls-panel button {
-      padding: 12px 18px; font-size: 16px; border-radius: 6px; border: 1px solid #aaa;
-      background: rgba(40, 40, 40, 0.8); color: #fff; cursor: pointer; font-weight: bold;
-    }
+    #ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; display: flex; flex-direction: column; justify-content: space-between; }
+    #top-panel { background: rgba(0, 0, 0, 0.7); color: #0f0; margin: 10px; padding: 12px; border-radius: 8px; pointer-events: auto; font-family: monospace; font-size: 13px; line-height: 1.6; text-shadow: 1px 1px 2px #000; }
+    #msg-container { margin: 10px auto; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    #status-msg { background: rgba(0, 0, 0, 0.8); color: #fff; padding: 12px 20px; border-radius: 8px; text-align: center; max-width: 90%; font-weight: bold; font-size: 15px; }
+    #accuracy-warn { background: rgba(255, 60, 60, 0.9); color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 14px; display: none; }
+    #controls-panel { margin-bottom: 20px; display: flex; gap: 10px; pointer-events: auto; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; }
+    #controls-panel button { padding: 12px 18px; font-size: 16px; border-radius: 6px; border: 1px solid #aaa; background: rgba(40, 40, 40, 0.8); color: #fff; cursor: pointer; font-weight: bold; }
     #controls-panel button:active { background: rgba(100, 100, 100, 0.8); }
-
-    #start-screen {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(0,0,0,0.85); z-index: 2000;
-      display: flex; justify-content: center; align-items: center; pointer-events: auto;
-    }
-    #start-btn {
-      padding: 18px 32px; font-size: 18px; border-radius: 8px; border: none;
-      background: #007bff; color: white; cursor: pointer; font-weight: bold;
-    }
+    #start-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2000; display: flex; justify-content: center; align-items: center; pointer-events: auto; }
+    #start-btn { padding: 18px 32px; font-size: 18px; border-radius: 8px; border: none; background: #007bff; color: white; cursor: pointer; font-weight: bold; }
   </style>
 </head>
 <body>
 
+  <!-- 手動スタート・権限許可 -->
   <div id="start-screen">
     <button id="start-btn">ARを開始<br><small>(カメラ・位置情報を許可)</small></button>
   </div>
@@ -97,7 +121,7 @@
       <div id="accuracy-warn">⚠️ センサー精度低下: スマホを8の字に振って校正してください</div>
       <div id="status-msg">位置情報と太陽の軌道を計算中...</div>
       
-      <!-- 手動補正ボタン -->
+      <!-- オフセット調整 -->
       <div id="controls-panel">
         <button id="btn-minus">◀ -1°</button>
         <button id="btn-reset">リセット</button>
@@ -108,39 +132,33 @@
 
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
     
-    <!-- ====== ワールド空間コンテナ ====== -->
+    <!-- ====== ワールド空間 ====== -->
     <a-entity id="world-container">
       
-      <a-entity rotation="0 0 0">
-        <a-sphere position="0 0 -5" radius="0.3" color="red" opacity="0.8"></a-sphere>
-        <a-text value="N (North)" position="0 0.8 -5" align="center" color="red" scale="1.5 1.5 1.5"></a-text>
-      </a-entity>
-      <a-entity rotation="0 -180 0">
-        <a-sphere position="0 0 -5" radius="0.3" color="royalblue" opacity="0.8"></a-sphere>
-        <a-text value="S (South)" position="0 0.8 -5" align="center" color="royalblue" scale="1.5 1.5 1.5"></a-text>
-      </a-entity>
-
       <!-- ====== 虹のコンテナ ====== -->
       <a-entity id="rainbow-pivot" visible="false">
         <a-entity position="0 0 -20">
-          <a-torus radius="14.8" radius-tubular="0.2" arc="180" color="#FF0000" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="14.4" radius-tubular="0.2" arc="180" color="#FF7F00" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="14.0" radius-tubular="0.2" arc="180" color="#FFFF00" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="13.6" radius-tubular="0.2" arc="180" color="#00FF00" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="13.2" radius-tubular="0.2" arc="180" color="#0000FF" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="12.8" radius-tubular="0.2" arc="180" color="#4B0082" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="12.4" radius-tubular="0.2" arc="180" color="#9400D3" material="opacity: 0.7; transparent: true"></a-torus>
+          
+          <!-- 【主虹】 加算合成(additive) で空と馴染ませる -->
+          <!-- metalness/roughness はシェーダー利用時は不要ですが、A-Frame側での要件を満たすため記載しています -->
+          <a-torus class="rainbow" radius="13" radius-tubular="0.6" arc="180" 
+                   material="shader: rainbow; isDouble: 0.0; transparent: true; blending: additive; depthWrite: false; opacityMult: 0; metalness: 0; roughness: 1"
+                   animation="property: material.opacityMult; from: 0; to: 1; dur: 3500; easing: easeOutCubic; startEvents: fadeIn">
+          </a-torus>
+
+          <!-- 【副虹】 メインの少し外側、色の順番が逆 (isDouble:1.0)、ディレイで後からフェードイン -->
+          <a-torus class="rainbow" radius="15" radius-tubular="1.0" arc="180" 
+                   material="shader: rainbow; isDouble: 1.0; transparent: true; blending: additive; depthWrite: false; opacityMult: 0; metalness: 0; roughness: 1"
+                   animation="property: material.opacityMult; from: 0; to: 1; dur: 4500; easing: easeOutCubic; delay: 1000; startEvents: fadeIn">
+          </a-torus>
+
         </a-entity>
       </a-entity>
-
     </a-entity>
 
-    <!-- カメラ -->
     <a-camera position="0 1.6 0" fov="100" look-controls></a-camera>
-
   </a-scene>
 
-  <!-- 制御スクリプト -->
   <script>
     const startBtn = document.getElementById('start-btn');
     const startScreen = document.getElementById('start-screen');
@@ -157,28 +175,15 @@
     const worldContainer = document.getElementById('world-container');
     const rainbowPivot = document.getElementById('rainbow-pivot');
 
-    // 手動補正用の変数
     let headingOffset = 0;
-
     let hasLocation = false;
     let userLat = 0, userLng = 0;
     let hasCompass = false;
     let initialHeading = 0;
 
-    // 手動補正ボタンのイベントリスナー
-    document.getElementById('btn-minus').addEventListener('click', () => {
-      headingOffset -= 1;
-      updateRainbow();
-    });
-    document.getElementById('btn-plus').addEventListener('click', () => {
-      headingOffset += 1;
-      updateRainbow();
-    });
-    document.getElementById('btn-reset').addEventListener('click', () => {
-      headingOffset = 0;
-      updateRainbow();
-    });
-
+    document.getElementById('btn-minus').addEventListener('click', () => { headingOffset -= 1; updateRainbow(); });
+    document.getElementById('btn-plus').addEventListener('click',  () => { headingOffset += 1; updateRainbow(); });
+    document.getElementById('btn-reset').addEventListener('click', () => { headingOffset = 0; updateRainbow(); });
 
     startBtn.addEventListener('click', async () => {
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -192,10 +197,8 @@
     });
 
     function initApp() {
-      // デバイスの方位監視
+      // コンパス精度の計算・補正
       window.addEventListener('deviceorientation', (e) => {
-        // --- 精度の警告処理 ---
-        // webkitCompassAccuracy が存在し、誤差が15度以上の場合は警告を出す (-1 は取得不能状態)
         if (e.webkitCompassAccuracy !== undefined) {
           if (e.webkitCompassAccuracy > 15 || e.webkitCompassAccuracy < 0) {
             accuracyWarn.style.display = 'block';
@@ -203,10 +206,7 @@
             accuracyWarn.style.display = 'none';
           }
         }
-
-        if (e.webkitCompassHeading !== undefined) {
-          handleHeading(e.webkitCompassHeading);
-        }
+        if (e.webkitCompassHeading !== undefined) handleHeading(e.webkitCompassHeading);
       });
       window.addEventListener('deviceorientationabsolute', (e) => {
         if (e.alpha !== null) handleHeading(360 - e.alpha);
@@ -225,7 +225,7 @@
         }
       }
 
-      // 位置情報の取得
+      // ジオロケーション取得
       if (!navigator.geolocation) return statusMsg.innerText = "位置情報がサポートされていません。";
       statusMsg.innerText = "現在地を取得しています...";
 
@@ -242,11 +242,10 @@
       );
     }
 
-    // 太陽・虹の計算
+    // 太陽系の再計算とフェードインのアニメーショントリガー
     function updateRainbow() {
       if (!hasLocation || !hasCompass) return;
       
-      // オフセット値の表示更新
       dbgOffset.innerText = headingOffset > 0 ? `+${headingOffset}` : headingOffset;
 
       const now = new Date();
@@ -268,14 +267,21 @@
         statusMsg.innerText = "太陽高度が42度以上のため、虹は地平線の下です";
         rainbowPivot.setAttribute('visible', 'false');
       } else if (sunAltitudeDeg < 0) {
-        statusMsg.innerText = "日没後のため太陽の虹は見えません（月虹モード未実装）";
+        statusMsg.innerText = "日没後のため太陽の虹は見えません";
         rainbowPivot.setAttribute('visible', 'false');
       } else {
-        statusMsg.innerText = "見回して、太陽の反対側のリングを探してください";
-        rainbowPivot.setAttribute('visible', 'true');
         
-        // --- 微調整オフセットの適用 ---
-        // ベースの計算に headingOffset を足し引きして手動でのズレを補正する
+        // 虹が非表示状態から切り替わるときにフェードインアニメーションを発火
+        if (rainbowPivot.getAttribute('visible') === false || rainbowPivot.getAttribute('visible') === "false") {
+          rainbowPivot.setAttribute('visible', 'true');
+          const rings = document.querySelectorAll('.rainbow');
+          rings.forEach(ring => ring.emit('fadeIn')); // アニメーション開始
+        } else {
+          rainbowPivot.setAttribute('visible', 'true');
+        }
+
+        statusMsg.innerText = "見回して、太陽の反対側の虹を探してください";
+        
         const finalRotY = -rainbowAzimuthDeg + headingOffset;
         rainbowPivot.setAttribute('rotation', `${rainbowAltitudeDeg} ${finalRotY} 0`);
       }
