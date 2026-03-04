@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+  <title>WebAR 虹プロトタイプ</title>
+  
+  <!-- A-Frame (WebVR/ARフレームワーク) の読み込み -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <!-- AR.js (カメラ映像の背景化やマーカーレスAR用) の読み込み -->
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+</head>
+<body style="margin: 0; overflow: hidden;">
+  
+  <!-- a-scene: 3D空間の定義。AR.jsで背景をWebカメラ映像に指定 -->
+  <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
+    
+    <!-- 虹のエンティティ (カメラの初期正面方向 Z=-10 に配置) -->
+    <!-- Z=-10 に対して半径およそ 9 の円を描くことで、視角約42度 (tan 42° ≒ 0.90) を表現 -->
+    <a-entity position="0 0 -10">
+      
+      <!-- 虹色の各リング (半透明の半円弧) -->
+      <!-- arc="180" で上半分だけのアーチ状にしています -->
+      <a-torus radius="9.6" radius-tubular="0.1" arc="180" color="#FF0000" material="opacity: 0.6; transparent: true"></a-torus> <!-- 赤 -->
+      <a-torus radius="9.4" radius-tubular="0.1" arc="180" color="#FF7F00" material="opacity: 0.6; transparent: true"></a-torus> <!-- 橙 -->
+      <a-torus radius="9.2" radius-tubular="0.1" arc="180" color="#FFFF00" material="opacity: 0.6; transparent: true"></a-torus> <!-- 黄 -->
+      <a-torus radius="9.0" radius-tubular="0.1" arc="180" color="#00FF00" material="opacity: 0.6; transparent: true"></a-torus> <!-- 緑 -->
+      <a-torus radius="8.8" radius-tubular="0.1" arc="180" color="#0000FF" material="opacity: 0.6; transparent: true"></a-torus> <!-- 青 -->
+      <a-torus radius="8.6" radius-tubular="0.1" arc="180" color="#4B0082" material="opacity: 0.6; transparent: true"></a-torus> <!-- 藍 -->
+      <a-torus radius="8.4" radius-tubular="0.1" arc="180" color="#9400D3" material="opacity: 0.6; transparent: true"></a-torus> <!-- 紫 -->
+
+    </a-entity>
+
+    <!-- カメラ: スマホのジャイロセンサーでの向き変更(look-controls)が有効になります -->
+    <!-- スマホを動かすと空間に配置された虹が相対的に動き、その場に実在するように見えます -->
+    <a-camera position="0 1.6 0" look-controls></a-camera>
+
+  </a-scene>
+
+</body>
+</html>
