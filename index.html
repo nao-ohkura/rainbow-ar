@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-  <title>リアルタイムWebAR 虹・月虹プロトタイプ</title>
+  <title>リアルタイムWebAR 虹・月虹プロトタイプ (方位補正版)</title>
   
   <!-- A-FrameとAR.jsの読み込み -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
@@ -31,24 +31,42 @@
       border-radius: 8px;
       font-size: 16px;
       line-height: 1.5;
+      cursor: pointer;
+    }
+    /* デバッグ情報用スタイル */
+    #debug-info {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      color: #0f0;
+      padding: 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.4;
+      z-index: 1000;
+      pointer-events: none;
     }
   </style>
 </head>
 <body style="margin: 0; overflow: hidden;">
 
-  <!-- メッセージ表示用UI -->
+  <!-- メッセージ表示用UI (iOSのセンサ許可のためのタップ領域兼用) -->
   <div id="ui-container">
-    <div id="message">位置情報と天体の計算を準備中...</div>
+    <div id="message">画面をタップしてセンサーを許可し<br>位置情報を取得してください</div>
   </div>
+
+  <!-- デバッグ表示用UI -->
+  <div id="debug-info">デバッグ待機中...</div>
 
   <!-- A-Frameシーン -->
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
     
     <!-- 虹・月虹を格納するコンテナ -->
     <a-entity id="rainbow-container" visible="false">
-      <!-- カメラから距離10の位置に配置 -->
+      <!-- カメラ正面(Z=-10)を基準とする -->
       <a-entity position="0 0 -10">
-        <!-- class="rainbow-ring" を付けて JS から色を一括変更できるようにする -->
         <a-torus class="rainbow-ring" radius="9.6" radius-tubular="0.1" arc="180" material="opacity: 0.6; transparent: true"></a-torus>
         <a-torus class="rainbow-ring" radius="9.4" radius-tubular="0.1" arc="180" material="opacity: 0.6; transparent: true"></a-torus>
         <a-torus class="rainbow-ring" radius="9.2" radius-tubular="0.1" arc="180" material="opacity: 0.6; transparent: true"></a-torus>
@@ -64,98 +82,178 @@
 
   </a-scene>
 
-  <!-- 天体計算・位置情報・UI制御のスクリプト -->
+  <!-- 天体計算・位置情報・UI制御・コンパス補正のスクリプト -->
   <script>
     window.onload = () => {
       const messageEl = document.getElementById('message');
+      const debugEl = document.getElementById('debug-info');
       const rainbowContainer = document.getElementById('rainbow-container');
       const rings = document.querySelectorAll('.rainbow-ring');
       
-      // 通常の虹の色 (外側から内側へ: 赤〜紫)
       const colorsSun = ['#FF0000', '#FF7F00', '#FFFF00', '#00FF00', '#0000FF', '#4B0082', '#9400D3'];
-      // 月虹の色 (淡く白っぽいセレニティ・パステルカラー)
       const colorsMoon = ['#ffcccc', '#ffe6cc', '#ffffcc', '#ccffcc', '#ccccff', '#e6ccff', '#ffccff']; 
 
-      if (!navigator.geolocation) {
-        messageEl.innerText = "このブラウザでは位置情報がサポートされていません。";
-        return;
-      }
+      // デバイスの方位情報（コンパス）
+      let initialHeading = 0;
+      let currentHeading = 0;
+      let hasHeading = false;
+      
+      // GPS情報
+      let userLat = 0;
+      let userLng = 0;
+      let hasLocation = false;
 
-      messageEl.innerText = "現在地を取得しています...";
+      // SunCalcのazimuth(南基準ラジアン)を真北基準(0〜359度の時計回り)に変換する関数
+      const formatAzimuth = (rad) => {
+        return ((rad * 180 / Math.PI) + 180 + 360) % 360;
+      };
 
-      // 現在地の取得
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
+      // デバイスの向き情報取得（コンパス）
+      window.addEventListener('deviceorientation', (e) => {
+        let heading = null;
+        if (e.webkitCompassHeading !== undefined) {
+          heading = e.webkitCompassHeading; // iOS用 真北基準
+        } else if (e.absolute === true && e.alpha !== null) {
+          heading = 360 - e.alpha; // Android向け（簡易方位）
+        }
+
+        if (heading !== null) {
+          currentHeading = heading;
+          if (!hasHeading) {
+            initialHeading = heading; // AR起動時に端末が向いていた絶対方角をオフセットとして記録
+            hasHeading = true;
+            if (hasLocation) updateRainbow(); // 位置情報があれば即再計算
+          }
+          updateDebugText(); // 常にデバッグ情報を更新
+        }
+      });
+
+      // iOS13以降のセンサー許可ダイアログ対応
+      let permissionRequested = false;
+      document.body.addEventListener('click', () => {
+        if (permissionRequested) return;
+        permissionRequested = true;
+        
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          DeviceOrientationEvent.requestPermission().catch(console.error);
+        }
+
+        startLocationTracking();
+      });
+
+      // 天体計算と虹の配置を実行
+      const updateRainbow = () => {
+        if (!hasLocation) return;
+        
+        const now = new Date();
+        const sunPos = SunCalc.getPosition(now, userLat, userLng);
+        const moonPos = SunCalc.getMoonPosition(now, userLat, userLng);
+        
+        // --- 太陽と月の高度（度数法） ---
+        const sunAltitudeDeg = sunPos.altitude * 180 / Math.PI;
+        const moonAltitudeDeg = moonPos.altitude * 180 / Math.PI;
+        
+        // --- 方位の変換 (SunCalcの南基準ラジアン → 北基準・度数法) ---
+        const sunAzimuthDeg = formatAzimuth(sunPos.azimuth);
+        const moonAzimuthDeg = formatAzimuth(moonPos.azimuth);
+
+        let targetAzimuthDeg = 0;
+        let targetAltitudeDeg = 0;
+        let mode = 'none';
+
+        if (sunAltitudeDeg > 0) {
+          mode = 'sun';
+        } else if (sunAltitudeDeg <= 0 && moonAltitudeDeg > 0) {
+          mode = 'moon';
+        }
+
+        if (mode === 'sun') {
+          rings.forEach((ring, i) => ring.setAttribute('color', colorsSun[i]));
           
-          const updateRainbow = () => {
-            const now = new Date();
+          if (sunAltitudeDeg >= 42) {
+            messageEl.innerHTML = `【太陽の虹を予測中】<br>太陽高度: ${sunAltitudeDeg.toFixed(1)}°<br>虹は地平線の下です`;
+            rainbowContainer.setAttribute('visible', 'false');
+          } else {
+            messageEl.innerHTML = `【太陽の虹を予測中】<br>太陽高度: ${sunAltitudeDeg.toFixed(1)}°<br>見回して反対側を探してください`;
+            rainbowContainer.setAttribute('visible', 'true');
             
-            // SunCalcで現在日時の太陽と月の位置を取得
-            const sunPos = SunCalc.getPosition(now, lat, lng);
-            const moonPos = SunCalc.getMoonPosition(now, lat, lng);
+            // 虹の中心座標（太陽の方位 + 180度, 高度の符号反転）
+            targetAzimuthDeg = (sunAzimuthDeg + 180) % 360;
+            targetAltitudeDeg = -sunAltitudeDeg;
+          }
+
+        } else if (mode === 'moon') {
+          rings.forEach((ring, i) => ring.setAttribute('color', colorsMoon[i]));
+          
+          if (moonAltitudeDeg >= 42) {
+            messageEl.innerHTML = `【月の虹を予測中】<br>月高度: ${moonAltitudeDeg.toFixed(1)}°<br>月虹は地平線の下です`;
+            rainbowContainer.setAttribute('visible', 'false');
+          } else {
+            messageEl.innerHTML = `【月の虹を予測中】<br>月高度: ${moonAltitudeDeg.toFixed(1)}°<br>見回して月虹を探してください`;
+            rainbowContainer.setAttribute('visible', 'true');
             
-            // ラジアンから度(degree)へ変換
-            const sunAzimuthDeg = sunPos.azimuth * 180 / Math.PI;
-            const sunAltitudeDeg = sunPos.altitude * 180 / Math.PI;
+            // 虹の中心座標（月の方位 + 180度, 高度の符号反転）
+            targetAzimuthDeg = (moonAzimuthDeg + 180) % 360;
+            targetAltitudeDeg = -moonAltitudeDeg;
+          }
+
+        } else {
+           messageEl.innerHTML = `天体が地平線の下です<br>虹は見えません`;
+           rainbowContainer.setAttribute('visible', 'false');
+        }
+
+        // --- A-Frameの回転を適用 ---
+        // A-Frameでは Y軸反時計回りが正。
+        // 北基準の方位角をA-Frameに合わせるための計算: (初期コンパス向いている方向 - 目的の方位)
+        const rotationY = hasHeading ? (initialHeading - targetAzimuthDeg) : (-targetAzimuthDeg);
+        const rotationX = targetAltitudeDeg; // X軸は高度
+        
+        rainbowContainer.setAttribute('rotation', `${rotationX} ${rotationY} 0`);
+
+        // デバッグ変数に保存しておく
+        window.__debugInfo = {
+          sunAzRad: sunAzimuthDeg, sunAltRad: sunAltitudeDeg,
+          rainAzRad: targetAzimuthDeg, rainAltRad: targetAltitudeDeg
+        };
+        
+        updateDebugText();
+      };
+
+      // デバッグ情報テキストの更新
+      const updateDebugText = () => {
+        if(!window.__debugInfo) return;
+        const d = window.__debugInfo;
+        debugEl.innerHTML = `
+          太陽位置: 🧭方位 ${d.sunAzRad.toFixed(1)}° / ↕️高度 ${d.sunAltRad.toFixed(1)}°<br>
+          虹の座標: 🎯方位 ${d.rainAzRad.toFixed(1)}° / ↕️高度 ${d.rainAltRad.toFixed(1)}°<br>
+          コンパス: 補正基準 ${hasHeading ? initialHeading.toFixed(1) + '°' : '未取得'} / 現在 ${currentHeading.toFixed(1)}°
+        `;
+      };
+
+      // GPSのトラッキング開始
+      const startLocationTracking = () => {
+        if (!navigator.geolocation) {
+          messageEl.innerText = "位置情報がサポートされていません。";
+          return;
+        }
+
+        messageEl.innerText = "現在地を取得しています...";
+
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            userLat = position.coords.latitude;
+            userLng = position.coords.longitude;
+            hasLocation = true;
             
-            const moonAzimuthDeg = moonPos.azimuth * 180 / Math.PI;
-            const moonAltitudeDeg = moonPos.altitude * 180 / Math.PI;
-
-            // 昼か夜（月虹モード）かの判定
-            let mode = 'none';
-            if (sunAltitudeDeg > 0) {
-              mode = 'sun'; // 昼: 太陽の虹モード
-            } else if (sunAltitudeDeg <= 0 && moonAltitudeDeg > 0) {
-              mode = 'moon'; // 夜: 月虹モード
-            }
-
-            if (mode === 'sun') {
-              // --- 太陽の虹モード ---
-              rings.forEach((ring, i) => ring.setAttribute('color', colorsSun[i]));
-              
-              if (sunAltitudeDeg >= 42) {
-                messageEl.innerHTML = `【太陽の虹を予測中】<br>太陽高度: ${sunAltitudeDeg.toFixed(1)}°<br>虹は地平線の下です`;
-                rainbowContainer.setAttribute('visible', 'false');
-              } else {
-                messageEl.innerHTML = `【太陽の虹を予測中】<br>太陽高度: ${sunAltitudeDeg.toFixed(1)}°<br>見回して、太陽の反対側を探してください`;
-                rainbowContainer.setAttribute('visible', 'true');
-                rainbowContainer.setAttribute('rotation', `${-sunAltitudeDeg} ${sunAzimuthDeg + 180} 0`);
-              }
-
-            } else if (mode === 'moon') {
-              // --- 月虹モード ---
-              rings.forEach((ring, i) => ring.setAttribute('color', colorsMoon[i]));
-              
-              if (moonAltitudeDeg >= 42) {
-                messageEl.innerHTML = `【月の虹を予測中】<br>月高度: ${moonAltitudeDeg.toFixed(1)}°<br>月虹は地平線の下です`;
-                rainbowContainer.setAttribute('visible', 'false');
-              } else {
-                messageEl.innerHTML = `【月の虹を予測中】<br>月高度: ${moonAltitudeDeg.toFixed(1)}°<br>見回して、月の反対側（月虹）を探してください`;
-                rainbowContainer.setAttribute('visible', 'true');
-                rainbowContainer.setAttribute('rotation', `${-moonAltitudeDeg} ${moonAzimuthDeg + 180} 0`);
-              }
-
-            } else {
-               // 太陽も月も出ていない場合
-               messageEl.innerHTML = `太陽も月も地平線の下です<br>虹は見えません`;
-               rainbowContainer.setAttribute('visible', 'false');
-            }
-          };
-
-          // 初回実行
-          updateRainbow();
-
-          // 1分ごとに天体の動きに合わせて再計算
-          setInterval(updateRainbow, 60000);
-
-        },
-        (error) => {
-          messageEl.innerText = "位置情報の取得に失敗しました: " + error.message;
-        },
-        { enableHighAccuracy: true }
-      );
+            updateRainbow();
+            setInterval(updateRainbow, 30000); // 30秒ごとに更新
+          },
+          (error) => {
+            messageEl.innerText = "位置情報の取得失敗: " + error.message;
+          },
+          { enableHighAccuracy: true }
+        );
+      };
     };
   </script>
 </body>
