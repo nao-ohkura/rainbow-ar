@@ -3,40 +3,55 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-  <title>リアルタイムWebAR 虹プロトタイプ (方位・デバッグ機能付き)</title>
+  <title>リアルタイムWebAR 虹プロトタイプ (広角・全体表示版)</title>
   
+  <!-- AR.jsがカメラを要求する前にGetUserMediaをフックして広角レンズを狙うハック -->
+  <script>
+    const origGetUserMedia = navigator.mediaDevices ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices) : null;
+    if (origGetUserMedia) {
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        if (constraints && constraints.video) {
+          // 既存のvideo制約をオブジェクト化
+          const videoConstraints = typeof constraints.video === 'object' ? constraints.video : {};
+          constraints.video = {
+            ...videoConstraints,
+            facingMode: 'environment', // 明示的に背面カメラを指定
+            // ※Safari (iOS) 向けに広角を要求するヒント (OS依存で確実に効くわけではありませんが、超広角が選ばれやすくなるテクニック)
+            zoom: 1.0 
+          };
+        }
+        return origGetUserMedia(constraints);
+      };
+    }
+  </script>
+
   <!-- A-FrameとAR.jsの読み込み -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-  
   <!-- SunCalcの読み込み (太陽の位置計算用) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
 
   <style>
     body { margin: 0; overflow: hidden; font-family: sans-serif; }
     
-    /* UIオーバーレイ */
     #ui-overlay {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
       pointer-events: none; z-index: 1000;
       display: flex; flex-direction: column; justify-content: space-between;
     }
     
-    /* 画面上部のデバッグパネル */
     #top-panel {
       background: rgba(0, 0, 0, 0.7); color: #0f0; margin: 10px; padding: 12px;
       border-radius: 8px; pointer-events: auto; font-family: monospace; font-size: 13px;
       line-height: 1.6; text-shadow: 1px 1px 2px #000;
     }
 
-    /* 画面下部のメインメッセージ */
     #status-msg {
       background: rgba(0, 0, 0, 0.8); color: #fff; margin: 10px auto 30px auto; 
       padding: 12px 20px; border-radius: 8px; text-align: center; max-width: 90%;
       font-weight: bold; font-size: 16px;
     }
 
-    /* 開始画面 (タップによるセンサー許可のため必須) */
     #start-screen {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
       background: rgba(0,0,0,0.85); z-index: 2000;
@@ -54,10 +69,9 @@
 
   <!-- センサー許可用のスタート画面 -->
   <div id="start-screen">
-    <button id="start-btn">ARを開始<br><small>(カメラ・位置情報・センサーを許可)</small></button>
+    <button id="start-btn">ARを開始<br><small>(カメラ・位置情報を許可)</small></button>
   </div>
 
-  <!-- デバッグおよびステータス表示UI -->
   <div id="ui-overlay">
     <div id="top-panel">
       <b>[デバッグ情報]</b><br>
@@ -69,47 +83,45 @@
     <div id="status-msg">位置情報と太陽の軌道を計算中...</div>
   </div>
 
-  <!-- A-Frameシーン -->
+  <!-- A-Frameシーン: AR.jsの設定 -->
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
     
     <!-- ====== ワールド空間コンテナ ====== -->
-    <!-- ここのY軸回転に「デバイス起動時のコンパス方位(initialHeading)」を与えることで、
-         ARカメラからの相対的な向きではなく、現実の真北と一致する絶対空間を表現します -->
     <a-entity id="world-container">
       
-      <!-- [視覚化用] 真北（North）オブジェクト: 座標系テスト用 -->
+      <!-- 真北（N）と真南（S）のマーカー -->
       <a-entity rotation="0 0 0">
         <a-sphere position="0 0 -5" radius="0.3" color="red" opacity="0.8"></a-sphere>
         <a-text value="N (North)" position="0 0.8 -5" align="center" color="red" scale="1.5 1.5 1.5"></a-text>
       </a-entity>
-      
-      <!-- [視覚化用] 真南（South）オブジェクト: 座標系テスト用 -->
       <a-entity rotation="0 -180 0">
         <a-sphere position="0 0 -5" radius="0.3" color="royalblue" opacity="0.8"></a-sphere>
         <a-text value="S (South)" position="0 0.8 -5" align="center" color="royalblue" scale="1.5 1.5 1.5"></a-text>
       </a-entity>
 
-      <!-- ====== 虹のコンテナ（対日点） ====== -->
+      <!-- ====== 虹のコンテナ ====== -->
       <a-entity id="rainbow-pivot" visible="false">
-        <a-entity position="0 0 -10">
-          <a-torus radius="9.6" radius-tubular="0.1" arc="180" color="#FF0000" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="9.4" radius-tubular="0.1" arc="180" color="#FF7F00" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="9.2" radius-tubular="0.1" arc="180" color="#FFFF00" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="9.0" radius-tubular="0.1" arc="180" color="#00FF00" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="8.8" radius-tubular="0.1" arc="180" color="#0000FF" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="8.6" radius-tubular="0.1" arc="180" color="#4B0082" material="opacity: 0.7; transparent: true"></a-torus>
-          <a-torus radius="8.4" radius-tubular="0.1" arc="180" color="#9400D3" material="opacity: 0.7; transparent: true"></a-torus>
+        <!-- Z軸側に遠ざける（-10 → -20）。半径を相対的にやや小さく設計し画面に収まりやすくする -->
+        <a-entity position="0 0 -20">
+          <a-torus radius="14.8" radius-tubular="0.2" arc="180" color="#FF0000" material="opacity: 0.7; transparent: true"></a-torus>
+          <a-torus radius="14.4" radius-tubular="0.2" arc="180" color="#FF7F00" material="opacity: 0.7; transparent: true"></a-torus>
+          <a-torus radius="14.0" radius-tubular="0.2" arc="180" color="#FFFF00" material="opacity: 0.7; transparent: true"></a-torus>
+          <a-torus radius="13.6" radius-tubular="0.2" arc="180" color="#00FF00" material="opacity: 0.7; transparent: true"></a-torus>
+          <a-torus radius="13.2" radius-tubular="0.2" arc="180" color="#0000FF" material="opacity: 0.7; transparent: true"></a-torus>
+          <a-torus radius="12.8" radius-tubular="0.2" arc="180" color="#4B0082" material="opacity: 0.7; transparent: true"></a-torus>
+          <a-torus radius="12.4" radius-tubular="0.2" arc="180" color="#9400D3" material="opacity: 0.7; transparent: true"></a-torus>
         </a-entity>
       </a-entity>
 
     </a-entity>
 
-    <a-camera position="0 1.6 0" look-controls></a-camera>
+    <!-- カメラ（fov="100"として広角を要求） -->
+    <a-camera position="0 1.6 0" fov="100" look-controls></a-camera>
 
   </a-scene>
 
   <!-- 制御スクリプト -->
-    <script>
+  <script>
     const startBtn = document.getElementById('start-btn');
     const startScreen = document.getElementById('start-screen');
     const dbgLoc = document.getElementById('dbg-loc');
@@ -126,12 +138,11 @@
 
     let hasLocation = false;
     let userLat = 0, userLng = 0;
-    
     let hasCompass = false;
     let initialHeading = 0;
 
     startBtn.addEventListener('click', async () => {
-      // iOS13以降のDeviceOrientation許可ダイアログ対応
+      // iOS13以降のDeviceOrientation許可要求
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         try {
           const permission = await DeviceOrientationEvent.requestPermission();
@@ -140,7 +151,7 @@
             return;
           }
         } catch (error) {
-          console.error('Permission Request Error:', error);
+          console.error('Permission Error:', error);
         }
       }
       startScreen.style.display = 'none';
@@ -149,16 +160,15 @@
 
     function initApp() {
       // 1. デバイスの方位（コンパス）イベント登録
-      // iOS用 (webkitCompassHeading: 真北基準・時計回り)
+      // iOS用 (webkitCompassHeading)
       window.addEventListener('deviceorientation', (e) => {
         if (e.webkitCompassHeading !== undefined) {
           handleHeading(e.webkitCompassHeading);
         }
       });
-      // Android用 (deviceorientationabsolute/alpha: 北0度・反時計回り)
+      // Android用 (deviceorientationabsolute)
       window.addEventListener('deviceorientationabsolute', (e) => {
         if (e.alpha !== null) {
-          // Androidのalphaは反時計回りのため、360から引いて時計回り(0-360)に統一する
           handleHeading(360 - e.alpha);
         }
       });
@@ -168,17 +178,13 @@
         dbgCompass.innerText = heading.toFixed(1);
         
         if (!hasCompass) {
-          // 初回起動時にデバイスが向いている方角を「初期方位(オフセット)」として記録
           initialHeading = heading;
           dbgInitial.innerText = initialHeading.toFixed(1);
           hasCompass = true;
           
-          // ワールドコンテナ自体を初期方位分だけ回転させることで、
-          // 仮想空間のZ-軸（標準）が「起動時に向いていた方向」ではなく「真北」を向くように補正する。
-          // A-FrameのY軸回転は反時計回りが正なので、初期方角(時計回り)を正の値として渡すと相殺されて真北が0度になる。
+          // ワールドコンテナを初期方位分だけ回転させ、現実の北と一致させる
           worldContainer.setAttribute('rotation', `0 ${initialHeading} 0`);
-          
-          if (hasLocation) updateRainbow(); // GPS取得済みなら即座に虹を配置
+          if (hasLocation) updateRainbow();
         }
       }
 
@@ -187,7 +193,6 @@
         statusMsg.innerText = "このブラウザでは位置情報がサポートされていません。";
         return;
       }
-      
       statusMsg.innerText = "現在地を取得しています...";
 
       navigator.geolocation.getCurrentPosition(
@@ -198,48 +203,36 @@
           
           dbgLoc.innerText = `${userLat.toFixed(4)}, ${userLng.toFixed(4)}`;
           
-          // 初回計算
           updateRainbow();
-          // 30秒ごとに再計算（天体の動きに合わせて）
-          setInterval(updateRainbow, 30000);
+          setInterval(updateRainbow, 30000); // 30秒ごとに更新
         },
         (error) => {
-          statusMsg.innerText = "位置情報の取得に失敗しました: " + error.message;
+          statusMsg.innerText = "位置情報の取得に失敗: " + error.message;
         },
         { enableHighAccuracy: true }
       );
     }
 
-    // 3. SunCalcを使って太陽・虹の座標を計算・配置する
+    // 3. 太陽・虹の座標を計算・配置する
     function updateRainbow() {
       if (!hasLocation || !hasCompass) return;
       
       const now = new Date();
-      // SunCalcで計算される方位(azimuth)は「南を0度とするラジアン値」
       const sunPos = SunCalc.getPosition(now, userLat, userLng);
       
-      // (1) 太陽の高度（ラジアン → 度数法）
       const sunAltitudeDeg = sunPos.altitude * 180 / Math.PI;
-      
-      // (2) 太陽の方位変換（南0度・ラジアン → 真北0度・時計回りの度数法へ）
-      // ラジアンを度数法にし、+180度して南基準から北基準へ変換。360で割った余りを取る。
       const sunAzimuthDeg = ((sunPos.azimuth * 180 / Math.PI) + 180 + 360) % 360;
 
-      // デバッグパネルへ出力
       dbgSunAlt.innerText = sunAltitudeDeg.toFixed(1);
       dbgSunAz.innerText = sunAzimuthDeg.toFixed(1);
 
-      // (3) 対日点（虹の中心点）の計算
-      // 方位：太陽の真逆 (+180度)
+      // 対日点（虹の中心点）の計算
       const rainbowAzimuthDeg = (sunAzimuthDeg + 180) % 360;
-      // 高度：太陽の高度の符号反転
       const rainbowAltitudeDeg = -sunAltitudeDeg;
 
-      // デバッグパネルへ出力
       dbgRbAlt.innerText = rainbowAltitudeDeg.toFixed(1);
       dbgRbAz.innerText = rainbowAzimuthDeg.toFixed(1);
 
-      // (4) 虹の表示・非表示の判定
       if (sunAltitudeDeg >= 42) {
         statusMsg.innerText = "太陽高度が42度以上のため、虹は地平線の下です";
         rainbowPivot.setAttribute('visible', 'false');
@@ -247,17 +240,13 @@
         statusMsg.innerText = "日没後のため太陽の虹は見えません（月虹モード未実装）";
         rainbowPivot.setAttribute('visible', 'false');
       } else {
-        statusMsg.innerText = "見回して、太陽の反対側（対日点）のリングを探してください";
+        statusMsg.innerText = "見回して、太陽の反対側のリングを探してください";
         rainbowPivot.setAttribute('visible', 'true');
         
-        // (5) 虹エンティティの配置（回転による移動）
-        // world-container(親)がすでに真北を向くように補正されているため、
-        // A-Frameの座標系に沿って、X軸(ピッチ/高度)とY軸(ヨー/方位)をストレートに適用すればよい。
-        // A-FrameのY軸は反時計回りが正なので、方位角(時計回り)を反転してマイナス値にする。
-        const rotX = rainbowAltitudeDeg;
-        const rotY = -rainbowAzimuthDeg;
-        
-        rainbowPivot.setAttribute('rotation', `${rotX} ${rotY} 0`);
+        // 方位を反転（A-FrameのY軸は反時計回りが正のため）
+        rainbowPivot.setAttribute('rotation', `${rainbowAltitudeDeg} ${-rainbowAzimuthDeg} 0`);
       }
     }
   </script>
+</body>
+</html>
