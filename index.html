@@ -3,39 +3,129 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-  <title>WebAR 虹プロトタイプ</title>
+  <title>リアルタイムWebAR 虹プロトタイプ</title>
   
-  <!-- A-Frame (WebVR/ARフレームワーク) の読み込み -->
+  <!-- A-FrameとAR.jsの読み込み -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-  <!-- AR.js (カメラ映像の背景化やマーカーレスAR用) の読み込み -->
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  
+  <!-- SunCalcの読み込み (太陽の位置計算用) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
+
+  <style>
+    /* UIメッセージ用スタイル */
+    #ui-container {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      width: 90%;
+      text-align: center;
+      font-family: sans-serif;
+    }
+    #message {
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+  </style>
 </head>
 <body style="margin: 0; overflow: hidden;">
-  
-  <!-- a-scene: 3D空間の定義。AR.jsで背景をWebカメラ映像に指定 -->
+
+  <!-- メッセージ表示用UI -->
+  <div id="ui-container">
+    <div id="message">位置情報と太陽の計算を準備中...</div>
+  </div>
+
+  <!-- A-Frameシーン -->
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
     
-    <!-- 虹のエンティティ (カメラの初期正面方向 Z=-10 に配置) -->
-    <!-- Z=-10 に対して半径およそ 9 の円を描くことで、視角約42度 (tan 42° ≒ 0.90) を表現 -->
-    <a-entity position="0 0 -10">
-      
-      <!-- 虹色の各リング (半透明の半円弧) -->
-      <!-- arc="180" で上半分だけのアーチ状にしています -->
-      <a-torus radius="9.6" radius-tubular="0.1" arc="180" color="#FF0000" material="opacity: 0.6; transparent: true"></a-torus> <!-- 赤 -->
-      <a-torus radius="9.4" radius-tubular="0.1" arc="180" color="#FF7F00" material="opacity: 0.6; transparent: true"></a-torus> <!-- 橙 -->
-      <a-torus radius="9.2" radius-tubular="0.1" arc="180" color="#FFFF00" material="opacity: 0.6; transparent: true"></a-torus> <!-- 黄 -->
-      <a-torus radius="9.0" radius-tubular="0.1" arc="180" color="#00FF00" material="opacity: 0.6; transparent: true"></a-torus> <!-- 緑 -->
-      <a-torus radius="8.8" radius-tubular="0.1" arc="180" color="#0000FF" material="opacity: 0.6; transparent: true"></a-torus> <!-- 青 -->
-      <a-torus radius="8.6" radius-tubular="0.1" arc="180" color="#4B0082" material="opacity: 0.6; transparent: true"></a-torus> <!-- 藍 -->
-      <a-torus radius="8.4" radius-tubular="0.1" arc="180" color="#9400D3" material="opacity: 0.6; transparent: true"></a-torus> <!-- 紫 -->
-
+    <!-- 虹を格納するコンテナ（このコンテナ自体を回転させることで虹の出現方向を制御） -->
+    <a-entity id="rainbow-container" visible="false">
+      <!-- 虹のエンティティ (カメラから距離10の位置) -->
+      <a-entity position="0 0 -10">
+        <!-- 半透明の半円アーチ (arc="180") -->
+        <a-torus radius="9.6" radius-tubular="0.1" arc="180" color="#FF0000" material="opacity: 0.6; transparent: true"></a-torus>
+        <a-torus radius="9.4" radius-tubular="0.1" arc="180" color="#FF7F00" material="opacity: 0.6; transparent: true"></a-torus>
+        <a-torus radius="9.2" radius-tubular="0.1" arc="180" color="#FFFF00" material="opacity: 0.6; transparent: true"></a-torus>
+        <a-torus radius="9.0" radius-tubular="0.1" arc="180" color="#00FF00" material="opacity: 0.6; transparent: true"></a-torus>
+        <a-torus radius="8.8" radius-tubular="0.1" arc="180" color="#0000FF" material="opacity: 0.6; transparent: true"></a-torus>
+        <a-torus radius="8.6" radius-tubular="0.1" arc="180" color="#4B0082" material="opacity: 0.6; transparent: true"></a-torus>
+        <a-torus radius="8.4" radius-tubular="0.1" arc="180" color="#9400D3" material="opacity: 0.6; transparent: true"></a-torus>
+      </a-entity>
     </a-entity>
 
-    <!-- カメラ: スマホのジャイロセンサーでの向き変更(look-controls)が有効になります -->
-    <!-- スマホを動かすと空間に配置された虹が相対的に動き、その場に実在するように見えます -->
+    <!-- カメラ（look-controlsでジャイロを使った視点移動が可能） -->
     <a-camera position="0 1.6 0" look-controls></a-camera>
 
   </a-scene>
 
+  <!-- 太陽計算・位置情報・UI制御のスクリプト -->
+  <script>
+    window.onload = () => {
+      const messageEl = document.getElementById('message');
+      const rainbowContainer = document.getElementById('rainbow-container');
+
+      // Geolocation APIが使えるかチェック
+      if (!navigator.geolocation) {
+        messageEl.innerText = "このブラウザでは位置情報がサポートされていません。";
+        return;
+      }
+
+      messageEl.innerText = "現在地を取得しています...";
+
+      // 現在地の取得
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          
+          // 太陽の位置を計算して虹の座標を更新する関数
+          const updateRainbow = () => {
+            const now = new Date();
+            // SunCalcで現在日時の太陽位置を取得
+            const sunPos = SunCalc.getPosition(now, lat, lng);
+            
+            // ラジアンから度(degree)へ変換
+            const sunAzimuthDeg = sunPos.azimuth * 180 / Math.PI;
+            const sunAltitudeDeg = sunPos.altitude * 180 / Math.PI;
+
+            // 太陽の高度が42度以上の場合は虹が見えない
+            if (sunAltitudeDeg >= 42) {
+              messageEl.innerHTML = `太陽高度: ${sunAltitudeDeg.toFixed(1)}°<br>虹は地平線の下です`;
+              rainbowContainer.setAttribute('visible', 'false');
+            } else {
+              messageEl.innerHTML = `太陽高度: ${sunAltitudeDeg.toFixed(1)}°<br>見回して、太陽の反対側を探してください`;
+              rainbowContainer.setAttribute('visible', 'true');
+
+              // 虹が現れる方向（反太陽点）の計算
+              // 方位角：太陽の真反対（180度足す）
+              const rainbowAzimuthDeg = sunAzimuthDeg + 180;
+              // 高度：太陽高度のマイナス（地平線下にある太陽なら、虹は高い位置になる）
+              const rainbowAltitudeDeg = -sunAltitudeDeg;
+
+              // コンテナを回転させて虹を移動させる（X軸: 高度, Y軸: 方位角）
+              rainbowContainer.setAttribute('rotation', `${rainbowAltitudeDeg} ${rainbowAzimuthDeg} 0`);
+            }
+          };
+
+          // 初回実行
+          updateRainbow();
+
+          // 1分ごとに太陽の動きに合わせて再計算
+          setInterval(updateRainbow, 60000);
+
+        },
+        (error) => {
+          messageEl.innerText = "位置情報の取得に失敗しました: " + error.message;
+        },
+        { enableHighAccuracy: true }
+      );
+    };
+  </script>
 </body>
 </html>
