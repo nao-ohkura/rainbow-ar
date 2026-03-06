@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-  <title>リアルタイムWebAR 虹プロトタイプ (コンパスUI・太陽ガイド・シェーダー搭載 極み版)</title>
+  <title>リアルタイムWebAR 虹プロトタイプ (月虹・UI・シェーダー 極み版)</title>
   
-  <!-- 広角レンズ取得のハック -->
   <script>
     const origGetUserMedia = navigator.mediaDevices ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices) : null;
     if (origGetUserMedia) {
@@ -19,17 +18,16 @@
     }
   </script>
 
-  <!-- A-FrameとAR.js、SunCalcの読み込み -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
 
-  <!-- ====== 虹描画用 カスタムシェーダー ====== -->
   <script>
     AFRAME.registerShader('rainbow', {
       schema: {
         isDouble: {type: 'float', default: 0.0, is: 'uniform'}, 
-        opacityMult: {type: 'float', default: 0.0, is: 'uniform'}
+        opacityMult: {type: 'float', default: 0.0, is: 'uniform'},
+        isMoonMode: {type: 'float', default: 0.0, is: 'uniform'} // 1.0で月虹モード
       },
       vertexShader: `
         varying vec2 vUv;
@@ -42,6 +40,7 @@
         varying vec2 vUv;
         uniform float isDouble;
         uniform float opacityMult;
+        uniform float isMoonMode;
 
         vec3 hsv2rgb(vec3 c) {
           vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
@@ -61,6 +60,11 @@
           float edgeFade = smoothstep(0.0, 0.15, sin(vUv.x * 3.14159265));
           float baseOpacity = isDouble > 0.5 ? 0.25 : 0.6;
           
+          if (isMoonMode > 0.5) {
+            baseOpacity *= 0.35; // 月虹はより淡く透明度を上げる
+            color = mix(color, vec3(0.95, 0.95, 1.0), 0.85); // 白っぽく(セレニティカラー)
+          }
+
           alpha *= baseOpacity * edgeFade * opacityMult;
           gl_FragColor = vec4(color, alpha);
         }
@@ -71,28 +75,16 @@
   <style>
     body { margin: 0; overflow: hidden; font-family: sans-serif; }
     #ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; display: flex; flex-direction: column; justify-content: space-between; }
-    
-    /* 上部デバッグパネル */
-    #top-panel { background: rgba(0, 0, 0, 0.7); color: #0f0; margin: 10px; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 13px; line-height: 1.6; text-shadow: 1px 1px 2px #000; }
-    
-    /* 下部UIコンテナ */
+    #top-panel { background: rgba(0, 0, 0, 0.7); color: #0f0; margin: 10px; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; line-height: 1.6; text-shadow: 1px 1px 2px #000; }
     #bottom-ui { position: absolute; bottom: 20px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-    
-    /* メッセージ・警告 */
     #accuracy-warn { background: rgba(255, 60, 60, 0.9); color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 14px; display: none; }
     #status-msg { background: rgba(0, 0, 0, 0.8); color: #fff; padding: 10px 16px; border-radius: 8px; text-align: center; max-width: 90%; font-weight: bold; font-size: 14px; }
-    
-    /* 操作系パネル */
     #controls-panel { display: flex; gap: 8px; pointer-events: auto; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 8px; }
     #controls-panel button { padding: 8px 16px; font-size: 15px; border-radius: 6px; border: 1px solid #aaa; background: rgba(40, 40, 40, 0.8); color: #fff; cursor: pointer; font-weight: bold; }
     #controls-panel button:active { background: rgba(100, 100, 100, 0.8); }
-
-    /* コンパスインジケーター */
     #compass-bar-container { position: relative; width: 260px; height: 36px; background: rgba(0, 0, 0, 0.65); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.3); overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.5); display: flex; justify-content: center; left: 0; }
     #compass-ruler { position: absolute; left: 50%; display: flex; transition: transform 0.1s linear; }
     #compass-center-marker { position: absolute; top: -2px; left: 50%; transform: translateX(-50%); color: #ff3333; font-size: 20px; font-weight: bold; text-shadow: 0 0 3px #000; }
-
-    /* 初期画面 */
     #start-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2000; display: flex; justify-content: center; align-items: center; pointer-events: auto; }
     #start-btn { padding: 18px 32px; font-size: 18px; border-radius: 8px; border: none; background: #007bff; color: white; cursor: pointer; font-weight: bold; }
   </style>
@@ -109,22 +101,21 @@
       <b>[デバッグ情報]</b><br>
       🧭 コンパス : <span id="dbg-compass">--</span>° (校正済: <span id="dbg-initial">--</span>°)<br>
       ☀️ 太陽 : 方位 <span id="dbg-sun-az">--</span>° / 高度 <span id="dbg-sun-alt">--</span>°<br>
-      🌈 反太陽点: 方位 <span id="dbg-rb-az">--</span>° / 高度 <span id="dbg-rb-alt">--</span>°<br>
+      🌙 月　 : 方位 <span id="dbg-moon-az">--</span>° / 高度 <span id="dbg-moon-alt">--</span>°<br>
+      🌈 反対点 : 方位 <span id="dbg-rb-az">--</span>° / 高度 <span id="dbg-rb-alt">--</span>°<br>
       ✂️ 補正値 : <span id="dbg-offset">0</span>°
     </div>
     
     <div id="bottom-ui">
       <div id="accuracy-warn">⚠️ センサー精度低下: スマホを8の字に振って校正</div>
-      <div id="status-msg">位置情報と太陽の軌道を計算中...</div>
+      <div id="status-msg">位置情報と天体の軌道を計算中...</div>
       
-      <!-- 手動補正ボタン -->
       <div id="controls-panel">
         <button id="btn-minus">◀ -1°</button>
         <button id="btn-reset">リセット</button>
         <button id="btn-plus">+1° ▶</button>
       </div>
 
-      <!-- コンパスバー -->
       <div id="compass-bar-container">
         <div id="compass-ruler"></div>
         <div id="compass-center-marker">▼</div>
@@ -133,114 +124,101 @@
   </div>
 
   <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;">
-    
-    <!-- ====== ワールド空間 (真北に固定される根本コンテナ) ====== -->
     <a-entity id="world-container">
       
-      <!-- 1. 北の目印 (赤いポールとNの文字) -->
+      <!-- 北と南の目印 -->
       <a-entity rotation="0 0 0">
         <a-cylinder color="#ff3333" radius="0.05" height="4" position="0 0 -15" material="opacity: 0.8; transparent: true"></a-cylinder>
         <a-text value="N (North)" color="#ff3333" align="center" position="0 2.5 -15" scale="2.5 2.5 2.5"></a-text>
         <a-ring color="#ff3333" radius-inner="0.4" radius-outer="0.5" position="0 -1.9 -15" rotation="-90 0 0"></a-ring>
       </a-entity>
-
-      <!-- 1.5 南の目印 (青いポール) -->
       <a-entity rotation="0 -180 0">
         <a-cylinder color="royalblue" radius="0.05" height="4" position="0 0 -15" material="opacity: 0.5; transparent: true"></a-cylinder>
         <a-text value="S (South)" color="royalblue" align="center" position="0 2.5 -15" scale="2.5 2.5 2.5"></a-text>
       </a-entity>
 
-      <!-- 2. 太陽のガイド (黄色の円) -->
-      <a-entity id="sun-pivot" visible="false">
+      <!-- 天体(太陽/月)のガイド -->
+      <a-entity id="celestial-pivot" visible="false">
         <a-entity position="0 0 -30">
-          <a-circle color="#ffcc00" radius="0.5" material="shader: flat; opacity: 0.9; transparent: true"></a-circle>
-          <a-ring color="#ffcc00" radius-inner="0.7" radius-outer="0.8" material="shader: flat; opacity: 0.7; transparent: true"></a-ring>
-          <a-text value="SUN GUIDE" color="#ffcc00" align="center" position="0 -1.5 0" scale="2.5 2.5 2.5"></a-text>
+          <a-circle id="celestial-circle" color="#ffcc00" radius="0.5" material="shader: flat; opacity: 0.9; transparent: true"></a-circle>
+          <a-ring id="celestial-ring" color="#ffcc00" radius-inner="0.7" radius-outer="0.8" material="shader: flat; opacity: 0.7; transparent: true"></a-ring>
+          <a-text id="celestial-text" value="SUN GUIDE" color="#ffcc00" align="center" position="0 -1.5 0" scale="2.5 2.5 2.5"></a-text>
         </a-entity>
       </a-entity>
 
-      <!-- 3. 虹のコンテナ -->
+      <!-- 虹のコンテナ -->
       <a-entity id="rainbow-pivot" visible="false">
         <a-entity position="0 0 -20">
           <!-- 主虹 -->
           <a-torus class="rainbow" radius="13" radius-tubular="0.6" arc="180" 
-                   material="shader: rainbow; isDouble: 0.0; transparent: true; blending: additive; depthWrite: false; opacityMult: 0; metalness: 0; roughness: 1"
+                   material="shader: rainbow; isDouble: 0.0; isMoonMode: 0.0; transparent: true; blending: additive; depthWrite: false; opacityMult: 0; metalness: 0; roughness: 1"
                    animation="property: material.opacityMult; from: 0; to: 1; dur: 3500; easing: easeOutCubic; startEvents: fadeIn">
           </a-torus>
           <!-- 副虹 -->
           <a-torus class="rainbow" radius="15" radius-tubular="1.0" arc="180" 
-                   material="shader: rainbow; isDouble: 1.0; transparent: true; blending: additive; depthWrite: false; opacityMult: 0; metalness: 0; roughness: 1"
+                   material="shader: rainbow; isDouble: 1.0; isMoonMode: 0.0; transparent: true; blending: additive; depthWrite: false; opacityMult: 0; metalness: 0; roughness: 1"
                    animation="property: material.opacityMult; from: 0; to: 1; dur: 4500; easing: easeOutCubic; delay: 1000; startEvents: fadeIn">
           </a-torus>
         </a-entity>
       </a-entity>
       
     </a-entity>
-
+    
     <a-camera position="0 1.6 0" fov="100" look-controls></a-camera>
   </a-scene>
 
-  <!-- 制御スクリプト -->
   <script>
-    const startBtn = document.getElementById('start-btn');
-    const startScreen = document.getElementById('start-screen');
-    const dbgCompass = document.getElementById('dbg-compass');
-    const dbgInitial = document.getElementById('dbg-initial');
     const dbgSunAz = document.getElementById('dbg-sun-az'), dbgSunAlt = document.getElementById('dbg-sun-alt');
+    const dbgMoonAz = document.getElementById('dbg-moon-az'), dbgMoonAlt = document.getElementById('dbg-moon-alt');
     const dbgRbAz = document.getElementById('dbg-rb-az'), dbgRbAlt = document.getElementById('dbg-rb-alt');
-    const dbgOffset = document.getElementById('dbg-offset');
+    const dbgCompass = document.getElementById('dbg-compass'), dbgInitial = document.getElementById('dbg-initial'), dbgOffset = document.getElementById('dbg-offset');
     const statusMsg = document.getElementById('status-msg'), accuracyWarn = document.getElementById('accuracy-warn');
+    const compassRuler = document.getElementById('compass-ruler');
     
     const worldContainer = document.getElementById('world-container');
     const rainbowPivot = document.getElementById('rainbow-pivot');
-    const sunPivot = document.getElementById('sun-pivot');
-    const compassRuler = document.getElementById('compass-ruler');
+    const celestialPivot = document.getElementById('celestial-pivot');
+    const celestialCircle = document.getElementById('celestial-circle');
+    const celestialRing = document.getElementById('celestial-ring');
+    const celestialText = document.getElementById('celestial-text');
 
-    let currentHeadingRaw = 0;
-    let headingOffset = 0;
+    let currentHeadingRaw = 0, headingOffset = 0, initialHeading = 0;
     let hasLocation = false, hasCompass = false;
     let userLat = 0, userLng = 0;
-    let initialHeading = 0;
 
-    // --- コンパスUIのルーラーを描画 (-720度 〜 +720度) ---
+    // --- コンパスUIの描画 ---
     let rulerHTML = "";
     for(let i = -720; i <= 720; i += 15) {
       let norm = (i % 360 + 360) % 360;
       let text = "|";
       if(norm === 0) text = "N"; else if(norm === 90) text = "E"; else if(norm === 180) text = "S"; else if(norm === 270) text = "W";
       let color = (norm === 0) ? "#ff3333" : "#fff";
-      let w = ['N','E','S','W'].includes(text) ? "bold" : "normal";
+      let fw = ['N','E','S','W'].includes(text) ? "bold" : "normal";
       let fs = (text === '|') ? "12px" : "15px";
-      rulerHTML += `<div style="width:30px; text-align:center; color:${color}; font-weight:${w}; font-size:${fs}; line-height:36px; flex-shrink:0;">${text}</div>`;
+      rulerHTML += `<div style="width:30px; text-align:center; color:${color}; font-weight:${fw}; font-size:${fs}; line-height:36px; flex-shrink:0;">${text}</div>`;
     }
     compassRuler.innerHTML = rulerHTML;
 
-    // 手動補正イベント
     document.getElementById('btn-minus').addEventListener('click', () => { headingOffset -= 1; updateState(); });
     document.getElementById('btn-plus').addEventListener('click',  () => { headingOffset += 1; updateState(); });
     document.getElementById('btn-reset').addEventListener('click', () => { headingOffset = 0; updateState(); });
 
-    startBtn.addEventListener('click', async () => {
+    document.getElementById('start-btn').addEventListener('click', async () => {
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         try {
           const permission = await DeviceOrientationEvent.requestPermission();
           if (permission !== 'granted') return alert('センサーへのアクセスが拒否されました。');
         } catch (error) { console.error(error); }
       }
-      startScreen.style.display = 'none';
+      document.getElementById('start-screen').style.display = 'none';
       initApp();
     });
 
-       function initApp() {
-      // ジャイロ・コンパス監視
+    function initApp() {
+      // ジャイロ監視
       window.addEventListener('deviceorientation', (e) => {
-        // --- 精度警告の判定 ---
         if (e.webkitCompassAccuracy !== undefined) {
-          if (e.webkitCompassAccuracy > 15 || e.webkitCompassAccuracy < 0) {
-            accuracyWarn.style.display = 'block';
-          } else {
-            accuracyWarn.style.display = 'none';
-          }
+          accuracyWarn.style.display = (e.webkitCompassAccuracy > 15 || e.webkitCompassAccuracy < 0) ? 'block' : 'none';
         }
         if (e.webkitCompassHeading !== undefined) handleHeading(e.webkitCompassHeading);
       });
@@ -253,108 +231,133 @@
         currentHeadingRaw = heading;
         dbgCompass.innerText = heading.toFixed(1);
         
-        // --- コンパスバーの更新 ---
-        // 手動オフセット(headingOffset)を加味して、ユーザーが向いている真の方角を計算
+        // コンパスバーの更新
         let trueHeading = (heading + headingOffset) % 360;
         if (trueHeading < 0) trueHeading += 360;
-
-        // 目盛りの幅は30px、1目盛り=15度。
-        // -720度から始まっているため、0度時点での中心オフセットを計算してスライドさせる
-        const pxPerDegree = 30 / 15; // 2px/度
-        const baseOffsetPx = -(720 * pxPerDegree); // -1440px
-        const movePx = baseOffsetPx - (trueHeading * pxPerDegree);
+        const movePx = -1440 - (trueHeading * 2);
         compassRuler.style.transform = `translateX(${movePx}px)`;
 
-        // --- ARワールドの初期化（初回のみ） ---
+        // ワールド(北基準)の同期
         if (!hasCompass) {
           initialHeading = heading;
           dbgInitial.innerText = initialHeading.toFixed(1);
           hasCompass = true;
-          // 現実空間と仮想空間を同期させるためのワールド回転
           worldContainer.setAttribute('rotation', `0 ${initialHeading} 0`);
           if (hasLocation) updateState();
-        } else {
-          // コンパス方位が変化した場合、手動オフセットのみを再計算に反映
-          // コンパス変動自体はカメラのlook-controlsが吸収するが、
-          // "ワールド全体"の北と"コンパスUI"の北を整合させるために微調整オフセットを適用
-          if (hasLocation) {
-             const worldOffset = initialHeading - headingOffset;
-             worldContainer.setAttribute('rotation', `0 ${worldOffset} 0`);
-          }
+        } else if (hasLocation) {
+          worldContainer.setAttribute('rotation', `0 ${initialHeading - headingOffset} 0`);
         }
       }
 
-      // ジオロケーション取得
       if (!navigator.geolocation) return statusMsg.innerText = "位置情報がサポートされていません。";
       statusMsg.innerText = "現在地を取得しています...";
 
+      // 位置情報の取得
       navigator.geolocation.getCurrentPosition(
         (position) => {
           userLat = position.coords.latitude;
           userLng = position.coords.longitude;
           hasLocation = true;
           updateState();
-          setInterval(updateState, 30000); // 30秒ごとに太陽と虹を再計算
+          setInterval(updateState, 30000); // 30秒ごとに天体更新
         },
         (error) => statusMsg.innerText = "位置情報の取得に失敗: " + error.message,
         { enableHighAccuracy: true }
       );
     }
 
-    // 太陽系の再計算とエンティティの配置
+    // 天体計算とエンティティの配置
     function updateState() {
       if (!hasLocation || !hasCompass) return;
-      
       dbgOffset.innerText = headingOffset > 0 ? `+${headingOffset}` : headingOffset;
-
-      // オフセットをワールド全体に反映
-      const worldOffset = initialHeading - headingOffset;
-      worldContainer.setAttribute('rotation', `0 ${worldOffset} 0`);
-
-      const now = new Date();
-      const sunPos = SunCalc.getPosition(now, userLat, userLng);
       
-      // 太陽の高度と方位
-      const sunAltitudeDeg = sunPos.altitude * 180 / Math.PI;
-      const sunAzimuthDeg = ((sunPos.azimuth * 180 / Math.PI) + 180 + 360) % 360;
+      const now = new Date();
+      
+      // 太陽
+      const sunPos = SunCalc.getPosition(now, userLat, userLng);
+      const sunAlt = sunPos.altitude * 180 / Math.PI;
+      const sunAz = ((sunPos.azimuth * 180 / Math.PI) + 180 + 360) % 360;
+      dbgSunAlt.innerText = sunAlt.toFixed(1);
+      dbgSunAz.innerText = sunAz.toFixed(1);
 
-      dbgSunAlt.innerText = sunAltitudeDeg.toFixed(1);
-      dbgSunAz.innerText = sunAzimuthDeg.toFixed(1);
+      // 月
+      const moonPos = SunCalc.getMoonPosition(now, userLat, userLng);
+      const moonAlt = moonPos.altitude * 180 / Math.PI;
+      const moonAz = ((moonPos.azimuth * 180 / Math.PI) + 180 + 360) % 360;
+      dbgMoonAlt.innerText = moonAlt.toFixed(1);
+      dbgMoonAz.innerText = moonAz.toFixed(1);
 
-      // 反太陽点（虹の中心点）
-      const rainbowAzimuthDeg = (sunAzimuthDeg + 180) % 360;
-      const rainbowAltitudeDeg = -sunAltitudeDeg;
+      // モード(昼/夜)の切り替え
+      let isMoonMode = false;
+      let targetAlt = 0;
+      let targetAz = 0;
 
-      dbgRbAlt.innerText = rainbowAltitudeDeg.toFixed(1);
-      dbgRbAz.innerText = rainbowAzimuthDeg.toFixed(1);
+      if (sunAlt > 0) {
+        // 昼 (太陽モード)
+        isMoonMode = false;
+        targetAlt = sunAlt;
+        targetAz = sunAz;
+      } else if (sunAlt <= 0 && moonAlt > 0) {
+        // 夜 (月虹モード)
+        isMoonMode = true;
+        targetAlt = moonAlt;
+        targetAz = moonAz;
+      }
 
-      // --- 太陽エンティティの配置 ---
-      // A-FrameのY軸は反時計回りが正なので、方位を反転
-      sunPivot.setAttribute('visible', sunAltitudeDeg > 0 ? 'true' : 'false');
-      sunPivot.setAttribute('rotation', `${sunAltitudeDeg} ${-sunAzimuthDeg} 0`);
-
-      // --- 虹エンティティの配置 ---
-      if (sunAltitudeDeg >= 42) {
-        statusMsg.innerText = "太陽高度が42度以上のため、虹は地平線の下です";
-        rainbowPivot.setAttribute('visible', 'false');
-      } else if (sunAltitudeDeg < 0) {
-        statusMsg.innerText = "日没後のため太陽の虹は見えません";
-        rainbowPivot.setAttribute('visible', 'false');
+      // 太陽/月のガイド配置
+      if (sunAlt > 0 || moonAlt > 0) {
+        celestialPivot.setAttribute('visible', 'true');
+        celestialPivot.setAttribute('rotation', `${targetAlt} ${-targetAz} 0`);
+        if (isMoonMode) {
+          celestialCircle.setAttribute('color', '#ddddff');     // 月は銀色(淡い青白)
+          celestialRing.setAttribute('color', '#ddddff');
+          celestialText.setAttribute('value', 'MOON GUIDE');
+          celestialText.setAttribute('color', '#ddddff');
+        } else {
+          celestialCircle.setAttribute('color', '#ffcc00');     // 太陽は黄色
+          celestialRing.setAttribute('color', '#ffcc00');
+          celestialText.setAttribute('value', 'SUN GUIDE');
+          celestialText.setAttribute('color', '#ffcc00');
+        }
       } else {
-        // 虹が非表示状態から切り替わるときにフェードインアニメーションを発火
+        celestialPivot.setAttribute('visible', 'false');
+      }
+
+      // 虹の中心ポイント (天体の反対)
+      const rainbowAz = (targetAz + 180) % 360;
+      const rainbowAlt = -targetAlt;
+      dbgRbAlt.innerText = rainbowAlt.toFixed(1);
+      dbgRbAz.innerText = rainbowAz.toFixed(1);
+
+      const rings = document.querySelectorAll('.rainbow');
+
+      // 虹の表示条件判定
+      if (targetAlt >= 42 || (sunAlt <= 0 && moonAlt <= 0)) {
+        rainbowPivot.setAttribute('visible', 'false');
+        if (targetAlt >= 42) {
+          statusMsg.innerText = isMoonMode ? "月高度が42度以上のため、月虹は地平線の下です" : "太陽高度が42度以上のため、虹は地平線の下です";
+        } else {
+          statusMsg.innerText = "太陽も月も出ていないため、虹は見えません";
+        }
+      } else {
+        statusMsg.innerText = isMoonMode ? "見回して、月ガイドと月虹を探してください" : "見回して、太陽ガイドと虹を探してください";
+        
+        // シェーダー(isMoonMode)の更新
+        rings.forEach(ring => {
+          const mat = ring.getAttribute('material');
+          mat.isMoonMode = isMoonMode ? 1.0 : 0.0;
+          ring.setAttribute('material', mat);
+        });
+
         if (rainbowPivot.getAttribute('visible') === false || rainbowPivot.getAttribute('visible') === "false") {
           rainbowPivot.setAttribute('visible', 'true');
-          const rings = document.querySelectorAll('.rainbow');
           rings.forEach(ring => ring.emit('fadeIn')); 
         } else {
           rainbowPivot.setAttribute('visible', 'true');
         }
-
-        statusMsg.innerText = "見回して、太陽ガイドと虹を探してください";
-        rainbowPivot.setAttribute('rotation', `${rainbowAltitudeDeg} ${-rainbowAzimuthDeg} 0`);
+        rainbowPivot.setAttribute('rotation', `${rainbowAlt} ${-rainbowAz} 0`);
       }
     }
   </script>
 </body>
 </html>
-
