@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-  <title>リアルタイムWebAR 虹プロトタイプ (月虹・満ち欠け・UI 極み版)</title>
+  <title>リアルタイムWebAR 虹プロトタイプ (スリムUI・月虹対応版)</title>
   
   <script>
     // カメラのズームと広角レンズを要求するハック
@@ -80,18 +80,27 @@
   <style>
     body { margin: 0; overflow: hidden; font-family: sans-serif; }
     #ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; display: flex; flex-direction: column; justify-content: space-between; }
-    #top-panel { background: rgba(0, 0, 0, 0.7); color: #0f0; margin: 10px; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 13px; line-height: 1.6; text-shadow: 1px 1px 2px #000; }
-    #bottom-ui { position: absolute; bottom: 20px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-    #accuracy-warn { background: rgba(255, 60, 60, 0.9); color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 14px; display: none; }
-    #status-msg { background: rgba(0, 0, 0, 0.8); color: #fff; padding: 10px 16px; border-radius: 8px; text-align: center; max-width: 90%; font-weight: bold; font-size: 14px; }
-    #controls-panel { display: flex; gap: 8px; pointer-events: auto; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 8px; }
-    #controls-panel button { padding: 8px 16px; font-size: 15px; border-radius: 6px; border: 1px solid #aaa; background: rgba(40, 40, 40, 0.8); color: #fff; cursor: pointer; font-weight: bold; }
-    #controls-panel button:active { background: rgba(100, 100, 100, 0.8); }
-    #compass-bar-container { position: relative; width: 260px; height: 36px; background: rgba(0, 0, 0, 0.65); border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.3); overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.5); display: flex; justify-content: center; left: 0; }
+    
+    /* 左上の半透明・小型デバッグパネル */
+    #top-panel { background: rgba(0, 0, 0, 0.35); color: #0f0; margin: 8px; padding: 8px 12px; border-radius: 6px; font-family: monospace; font-size: 11px; line-height: 1.4; text-shadow: 1px 1px 2px #000; align-self: flex-start; backdrop-filter: blur(2px); }
+    
+    #bottom-ui { position: absolute; bottom: 15px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    
+    #accuracy-warn { background: rgba(255, 60, 60, 0.7); color: #fff; padding: 6px 14px; border-radius: 12px; font-weight: bold; font-size: 11px; display: none; }
+    #status-msg { background: rgba(0, 0, 0, 0.4); color: #fff; padding: 8px 16px; border-radius: 16px; text-align: center; max-width: 90%; font-size: 13px; text-shadow: 1px 1px 2px #000; backdrop-filter: blur(2px); }
+    
+    /* スリムな補正ボタン */
+    #controls-panel { display: flex; gap: 12px; pointer-events: auto; }
+    #controls-panel button { padding: 6px 14px; font-size: 12px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.3); background: rgba(0, 0, 0, 0.35); color: #fff; cursor: pointer; text-shadow: 1px 1px 2px #000; backdrop-filter: blur(2px); }
+    #controls-panel button:active { background: rgba(255, 255, 255, 0.3); }
+    
+    /* 小型コンパスバー */
+    #compass-bar-container { position: relative; width: 220px; height: 24px; background: rgba(0, 0, 0, 0.4); border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2); overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.5); display: flex; justify-content: center; left: 0; backdrop-filter: blur(2px); }
     #compass-ruler { position: absolute; left: 50%; display: flex; transition: transform 0.1s linear; }
-    #compass-center-marker { position: absolute; top: -2px; left: 50%; transform: translateX(-50%); color: #ff3333; font-size: 20px; font-weight: bold; text-shadow: 0 0 3px #000; }
+    #compass-center-marker { position: absolute; top: 0px; left: 50%; transform: translateX(-50%); color: #ff3333; font-size: 16px; font-weight: bold; text-shadow: 0 0 3px #000; line-height: 24px; }
+    
     #start-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2000; display: flex; justify-content: center; align-items: center; pointer-events: auto; }
-    #start-btn { padding: 18px 32px; font-size: 18px; border-radius: 8px; border: none; background: #007bff; color: white; cursor: pointer; font-weight: bold; }
+    #start-btn { padding: 16px 28px; font-size: 16px; border-radius: 8px; border: none; background: rgba(0, 123, 255, 0.9); color: white; cursor: pointer; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -102,7 +111,6 @@
 
   <div id="ui-overlay">
     <div id="top-panel">
-      <b>[デバッグ情報]</b><br>
       🧭 コンパス : <span id="dbg-compass">--</span>° (校正済: <span id="dbg-initial">--</span>°)<br>
       ☀️ 太陽 : 方位 <span id="dbg-sun-az">--</span>° / 高度 <span id="dbg-sun-alt">--</span>°<br>
       🌙 月　 : 方位 <span id="dbg-moon-az">--</span>° / 高度 <span id="dbg-moon-alt">--</span>° / 輝度 <span id="dbg-moon-frac">--</span>%<br>
@@ -111,13 +119,13 @@
     </div>
     
     <div id="bottom-ui">
-      <div id="accuracy-warn">⚠️ センサー精度低下: スマホを8の字に振って校正</div>
+      <div id="accuracy-warn">⚠️ センサー精度低下: 8の字に振って校正</div>
       <div id="status-msg">位置情報と天体の軌道を計算中...</div>
       
       <div id="controls-panel">
-        <button id="btn-minus">◀ -1°</button>
+        <button id="btn-minus">◀ 補正</button>
         <button id="btn-reset">リセット</button>
-        <button id="btn-plus">+1° ▶</button>
+        <button id="btn-plus">補正 ▶</button>
       </div>
 
       <div id="compass-bar-container">
@@ -133,12 +141,12 @@
       <!-- 北と南の目印 -->
       <a-entity rotation="0 0 0">
         <a-cylinder color="#ff3333" radius="0.05" height="4" position="0 0 -15" material="opacity: 0.8; transparent: true"></a-cylinder>
-        <a-text value="N (North)" color="#ff3333" align="center" position="0 2.5 -15" scale="2.5 2.5 2.5"></a-text>
+        <a-text value="N" color="#ff3333" align="center" position="0 2.5 -15" scale="2.5 2.5 2.5"></a-text>
         <a-ring color="#ff3333" radius-inner="0.4" radius-outer="0.5" position="0 -1.9 -15" rotation="-90 0 0"></a-ring>
       </a-entity>
       <a-entity rotation="0 -180 0">
         <a-cylinder color="royalblue" radius="0.05" height="4" position="0 0 -15" material="opacity: 0.5; transparent: true"></a-cylinder>
-        <a-text value="S (South)" color="royalblue" align="center" position="0 2.5 -15" scale="2.5 2.5 2.5"></a-text>
+        <a-text value="S" color="royalblue" align="center" position="0 2.5 -15" scale="2.5 2.5 2.5"></a-text>
       </a-entity>
 
       <!-- 太陽ガイド -->
@@ -146,38 +154,31 @@
         <a-entity position="0 0 -30">
           <a-circle color="#ffcc00" radius="0.5" material="shader: flat; opacity: 0.9; transparent: true"></a-circle>
           <a-ring color="#ffcc00" radius-inner="0.7" radius-outer="0.8" material="shader: flat; opacity: 0.7; transparent: true"></a-ring>
-          <a-text value="SUN GUIDE" color="#ffcc00" align="center" position="0 -1.5 0" scale="2.5 2.5 2.5"></a-text>
         </a-entity>
       </a-entity>
 
       <!-- 月ガイド -->
       <a-entity id="moon-pivot" visible="false">
         <a-entity position="0 0 -30">
-          <a-circle color="#ddddff" radius="0.5" material="shader: flat; opacity: 0.9; transparent: true"></a-circle>
-          <a-ring color="#ddddff" radius-inner="0.7" radius-outer="0.8" material="shader: flat; opacity: 0.7; transparent: true"></a-ring>
-          <a-text value="MOON GUIDE" color="#ddddff" align="center" position="0 -1.5 0" scale="2.5 2.5 2.5"></a-text>
+          <a-circle color="#ddddff" radius="0.4" material="shader: flat; opacity: 0.9; transparent: true"></a-circle>
+          <a-ring color="#ddddff" radius-inner="0.6" radius-outer="0.7" material="shader: flat; opacity: 0.7; transparent: true"></a-ring>
         </a-entity>
       </a-entity>
 
       <!-- 虹のコンテナ -->
       <a-entity id="rainbow-pivot" visible="false">
         <a-entity position="0 0 -20">
-          <!-- 主虹 -->
-          <a-torus class="rainbow" radius="13" radius-tubular="0.6" arc="180" 
+          <!-- 主虹のみ残す -->
+          <a-torus class="rainbow" radius="18" radius-tubular="0.6" arc="180" 
                    material="shader: rainbow; isDouble: 0.0; isMoonMode: 0.0; moonFraction: 1.0; transparent: true; blending: additive; depthWrite: false; opacityMult: 0; metalness: 0; roughness: 1"
                    animation="property: material.opacityMult; from: 0; to: 1; dur: 3500; easing: easeOutCubic; startEvents: fadeIn">
-          </a-torus>
-          <!-- 副虹 -->
-          <a-torus class="rainbow" radius="15" radius-tubular="1.0" arc="180" 
-                   material="shader: rainbow; isDouble: 1.0; isMoonMode: 0.0; moonFraction: 1.0; transparent: true; blending: additive; depthWrite: false; opacityMult: 0; metalness: 0; roughness: 1"
-                   animation="property: material.opacityMult; from: 0; to: 1; dur: 4500; easing: easeOutCubic; delay: 1000; startEvents: fadeIn">
           </a-torus>
         </a-entity>
       </a-entity>
       
     </a-entity>
     
-    <a-camera position="0 1.6 0" fov="100" look-controls></a-camera>
+    <a-camera position="0 1.6 0" fov="80" look-controls></a-camera>
   </a-scene>
 
   <script>
@@ -205,8 +206,8 @@
       if(norm === 0) text = "N"; else if(norm === 90) text = "E"; else if(norm === 180) text = "S"; else if(norm === 270) text = "W";
       let color = (norm === 0) ? "#ff3333" : "#fff";
       let fw = ['N','E','S','W'].includes(text) ? "bold" : "normal";
-      let fs = (text === '|') ? "12px" : "15px";
-      rulerHTML += `<div style="width:30px; text-align:center; color:${color}; font-weight:${fw}; font-size:${fs}; line-height:36px; flex-shrink:0;">${text}</div>`;
+      let fs = (text === '|') ? "10px" : "12px";
+      rulerHTML += `<div style="width:26px; text-align:center; color:${color}; font-weight:${fw}; font-size:${fs}; line-height:24px; flex-shrink:0;">${text}</div>`;
     }
     compassRuler.innerHTML = rulerHTML;
 
@@ -246,7 +247,8 @@
         let trueHeading = (heading + headingOffset) % 360;
         if (trueHeading < 0) trueHeading += 360;
         
-        const movePx = -1440 - (trueHeading * 2);
+        // 26px width per 15 degrees -> ~1.733px / deg
+        const movePx = -1248 - (trueHeading * (26/15));
         compassRuler.style.transform = `translateX(${movePx}px)`;
 
         // ワールドの回転同期
@@ -348,19 +350,19 @@
       if (targetAlt >= 42 || (sunAlt <= 0 && moonAlt <= 0) || (isMoonMode && moonFraction < 0.1)) {
         rainbowPivot.setAttribute('visible', 'false');
         if (targetAlt >= 42) {
-          statusMsg.innerText = isMoonMode ? "月高度が42度以上のため、月虹は地平線の下です" : "太陽高度が42度以上のため、虹は地平線の下です";
+          statusMsg.innerText = isMoonMode ? "月高度が高いため月虹は地平線下です" : "太陽高度が高いため虹は地平線下です";
         } else if (isMoonMode && moonFraction < 0.1) {
-          statusMsg.innerText = "新月に近く月の光が弱すぎるため、月虹は見えません";
+          statusMsg.innerText = "新月に近く光が弱いため、月虹は見えません";
         } else {
-          statusMsg.innerText = "太陽も月も出ていないため、虹は見えません";
+          statusMsg.innerText = "天体が出ていないため、虹は見えません";
         }
       } else {
         // 表示可能な場合のアドバイス
         if (isMoonMode) {
           if (moonFraction >= 0.8) {
-            statusMsg.innerText = "満月に近いため月虹のチャンスです！見回して探してください";
+            statusMsg.innerText = "満月に近いため月虹のチャンスです！";
           } else if (moonFraction >= 0.4) {
-            statusMsg.innerText = "月虹が見える可能性があります（見回して探してください）";
+            statusMsg.innerText = "月虹が見える可能性があります（見回してください）";
           } else {
             statusMsg.innerText = "月の光が弱いため、月虹は非常に薄い状態です";
           }
@@ -372,7 +374,7 @@
         rings.forEach(ring => {
           const mat = ring.getAttribute('material');
           mat.isMoonMode = isMoonMode ? 1.0 : 0.0;
-          mat.moonFraction = moonFraction; // 追加：月の輝度をシェーダーへ送る
+          mat.moonFraction = moonFraction;
           ring.setAttribute('material', mat);
         });
 
